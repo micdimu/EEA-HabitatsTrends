@@ -682,22 +682,26 @@ extract_wdpa_n2k <- function(
 }
 
 
-#' Calculate polygon coverage for one processing tile
+#' Calculate protected-area and terrestrial coverage for one tile
 #'
-#' Calculates the percentage of each 10-km grid cell covered by one
-#' or more polygon datasets. Protected-area polygons are dissolved
-#' before rasterisation so overlapping designations are counted only
-#' once.
+#' Calculates multiple polygon-coverage variables and terrestrial
+#' surface coverage for each grid cell within a processing tile.
+#'
+#' All coverage layers are rasterised using the same fine-resolution
+#' raster template and aggregated to the original grid resolution,
+#' ensuring spatial consistency among datasets.
 #'
 #' @param tile_name Character string identifying the processing tile.
 #' @param grid An `sf` object containing the complete analysis grid.
 #'   The object must contain a `tile_id` column.
-#' @param vector_files Character vector containing one or more polygon
-#'   datasets in the same CRS as `grid`.
+#' @param coverage_sources Named list of character vectors containing
+#'   polygon datasets. List names are used as output column names.
+#'   Multiple files belonging to the same dataset are combined and
+#'   dissolved before rasterisation.
+#' @param boundary An `sf` polygon object defining terrestrial surface.
+#'   It must use the same CRS as `grid`.
 #' @param output_name Character string used to create the cache
 #'   subdirectory.
-#' @param coverage_name Character string used as the output coverage
-#'   column name.
 #' @param tile_dir Character string giving the parent directory used
 #'   for cached tile results.
 #' @param id Character string identifying the unique grid-cell ID.
@@ -709,28 +713,29 @@ extract_wdpa_n2k <- function(
 #' @param overwrite Logical. If `TRUE`, cached results are ignored and
 #'   the tile is recalculated.
 #'
-#' @return A data frame containing one row per grid cell and the
-#'   requested percentage-coverage variable.
+#' @return A data frame containing one row per grid cell, one column
+#'   for each element of `coverage_sources`, and `land_cov`, the
+#'   percentage of terrestrial surface within each grid cell.
 #'
 #' @details
-#' Only polygons intersecting the current tile are read from disk.
-#' Polygon overlaps are dissolved with `st_union()` before
-#' rasterisation.
+#' Only polygons intersecting the current tile are read from each
+#' source file. Polygons belonging to the same coverage dataset are
+#' dissolved before rasterisation so overlapping designations are
+#' counted only once.
 #'
-#' Coverage is rasterised at `raster_res` resolution using fractional
-#' pixel coverage and aggregated to the original grid resolution.
+#' Polygon and terrestrial coverage are rasterised at `raster_res`
+#' resolution using fractional pixel coverage (`cover = TRUE`) and
+#' aggregated to `grid_res`.
 #'
-#' Tile results are cached as RDS files. Corrupted cache files are
-#' automatically discarded and recalculated. New cache files are
-#' written through a temporary file to reduce the risk of corruption
-#' if the analysis is interrupted.
+#' Tile results are cached as RDS files. Corrupted or incompatible
+#' cache files are automatically discarded and recalculated.
 #'
 process_coverage_tile <- function(
                 tile_name,
                 grid,
-                vector_files,
+                coverage_sources,
+                boundary,
                 output_name,
-                coverage_name,
                 tile_dir,
                 id = "CellCode",
                 grid_res = 10000,
@@ -754,8 +759,26 @@ process_coverage_tile <- function(
                 )
         }
         
-        missing_files <- vector_files[
-                !file.exists(vector_files)
+        if (
+                !is.list(coverage_sources) ||
+                length(coverage_sources) == 0 ||
+                is.null(names(coverage_sources)) ||
+                any(names(coverage_sources) == "") ||
+                anyDuplicated(names(coverage_sources))
+        ) {
+                stop(
+                        "'coverage_sources' must be a named list ",
+                        "with unique, non-empty names."
+                )
+        }
+        
+        source_files <- unlist(
+                coverage_sources,
+                use.names = FALSE
+        )
+        
+        missing_files <- source_files[
+                !file.exists(source_files)
         ]
         
         if (length(missing_files) > 0) {
@@ -767,6 +790,34 @@ process_coverage_tile <- function(
                         )
                 )
         }
+        
+        if (sf::st_crs(boundary) != sf::st_crs(grid)) {
+                stop(
+                        "'boundary' and 'grid' must use the same CRS."
+                )
+        }
+        
+        
+        #### Select grid cells belonging to tile ####
+        
+        grid_tile <- grid[
+                grid$tile_id == tile_name,
+        ]
+        
+        if (nrow(grid_tile) == 0) {
+                stop(
+                        "No grid cells found for tile: ",
+                        tile_name
+                )
+        }
+        
+        tile_bbox <- sf::st_bbox(
+                grid_tile
+        )
+        
+        tile_filter <- sf::st_as_sfc(
+                tile_bbox
+        )
         
         
         #### Initialise tile output ####
@@ -803,6 +854,12 @@ process_coverage_tile <- function(
         
         #### Read cached result ####
         
+        expected_columns <- c(
+                id,
+                names(coverage_sources),
+                "land_cov"
+        )
+        
         if (
                 file.exists(output_file) &&
                 !overwrite
@@ -813,7 +870,20 @@ process_coverage_tile <- function(
                         error = function(e) NULL
                 )
                 
-                if (!is.null(cached_result)) {
+                cache_valid <-
+                        !is.null(cached_result) &&
+                        all(
+                                expected_columns %in%
+                                        names(cached_result)
+                        ) &&
+                        nrow(cached_result) ==
+                        nrow(grid_tile) &&
+                        setequal(
+                                cached_result[[id]],
+                                grid_tile[[id]]
+                        )
+                
+                if (cache_valid) {
                         
                         message(
                                 "Cached result found."
@@ -825,7 +895,7 @@ process_coverage_tile <- function(
                 }
                 
                 message(
-                        "Corrupted cache found. ",
+                        "Corrupted or incompatible cache found. ",
                         "Deleting and recomputing tile."
                 )
                 
@@ -835,125 +905,7 @@ process_coverage_tile <- function(
         }
         
         
-        #### Select grid cells belonging to tile ####
-        
-        grid_tile <- grid |>
-                dplyr::filter(
-                        tile_id == tile_name
-                )
-        
-        if (nrow(grid_tile) == 0) {
-                stop(
-                        "No grid cells found for tile: ",
-                        tile_name
-                )
-        }
-        
-        tile_bbox <- sf::st_bbox(
-                grid_tile
-        )
-        
-        tile_filter <- sf::st_as_sfc(
-                tile_bbox
-        )
-        
-        
-        #### Read polygons overlapping tile ####
-        
-        polygon_list <- purrr::map(
-                vector_files,
-                function(f) {
-                        
-                        x <- sf::st_read(
-                                f,
-                                wkt_filter = sf::st_as_text(
-                                        tile_filter
-                                ),
-                                quiet = TRUE
-                        )
-                        
-                        if (nrow(x) == 0) {
-                                return(NULL)
-                        }
-                        
-                        x <- suppressWarnings(
-                                sf::st_crop(
-                                        x,
-                                        tile_bbox
-                                )
-                        )
-                        
-                        x <- x[
-                                !sf::st_is_empty(x),
-                        ]
-                        
-                        if (nrow(x) == 0) {
-                                return(NULL)
-                        }
-                        
-                        # Keep geometry only, regardless of the
-                        # geometry-column name.
-                        x[
-                                ,
-                                0,
-                                drop = FALSE
-                        ]
-                }
-        ) |>
-                purrr::compact()
-        
-        
-        #### Return zero if no polygons occur in tile ####
-        
-        if (length(polygon_list) == 0) {
-                
-                result <- grid_tile |>
-                        sf::st_drop_geometry() |>
-                        dplyr::transmute(
-                                "{id}" :=
-                                        .data[[id]],
-                                
-                                "{coverage_name}" :=
-                                        0
-                        )
-                
-                save_rds_safe(
-                        result,
-                        output_file
-                )
-                
-                return(result)
-        }
-        
-        
-        #### Dissolve overlapping polygons ####
-        
-        polygons_tile <- dplyr::bind_rows(
-                polygon_list
-        )
-        
-        message(
-                "Polygon features in tile: ",
-                format(
-                        nrow(polygons_tile),
-                        big.mark = ","
-                )
-        )
-        
-        polygon_union <- sf::st_union(
-                sf::st_geometry(
-                        polygons_tile
-                )
-        )
-        
-        polygon_union <- sf::st_sf(
-                value = 1,
-                geometry = polygon_union,
-                crs = sf::st_crs(grid)
-        )
-        
-        
-        #### Create temporary raster ####
+        #### Create common raster template ####
         
         fact <- grid_res /
                 raster_res
@@ -997,34 +949,7 @@ process_coverage_tile <- function(
         }
         
         
-        #### Rasterise polygon coverage ####
-        
-        coverage_raster <- terra::rasterize(
-                terra::vect(
-                        polygon_union
-                ),
-                template,
-                field = "value",
-                background = 0,
-                cover = TRUE
-        )
-        
-        
-        #### Aggregate coverage to grid resolution ####
-        
-        coverage_grid <- terra::aggregate(
-                coverage_raster,
-                fact = fact,
-                fun = "mean",
-                na.rm = TRUE
-        ) * 100
-        
-        names(
-                coverage_grid
-        ) <- coverage_name
-        
-        
-        #### Extract coverage values ####
+        #### Create common extraction points ####
         
         grid_points <- suppressWarnings(
                 sf::st_point_on_surface(
@@ -1032,45 +957,223 @@ process_coverage_tile <- function(
                 )
         )
         
-        extracted <- terra::extract(
-                coverage_grid,
-                terra::vect(
-                        grid_points
-                )
+        grid_points_vect <- terra::vect(
+                grid_points
         )
         
-        result <- grid_tile |>
-                sf::st_drop_geometry() |>
-                dplyr::transmute(
-                        "{id}" :=
-                                .data[[id]],
-                        
-                        "{coverage_name}" :=
-                                extracted[[coverage_name]])
         
+        #### Internal helper: read polygons for current tile ####
         
-        #### Numerical quality control ####
-        
-        values <- result[[coverage_name]]
-        
-        if (
-                any(
-                        values < -1e-6 |
-                        values > 100 + 1e-6,
-                        na.rm = TRUE
-                )
-        ) {
-                stop(
-                        "Coverage outside the expected 0-100% range."
+        read_tile_polygons <- function(files) {
+                
+                polygon_list <- purrr::map(
+                        files,
+                        function(f) {
+                                
+                                x <- sf::st_read(
+                                        f,
+                                        wkt_filter =
+                                                sf::st_as_text(
+                                                        tile_filter
+                                                ),
+                                        quiet = TRUE
+                                )
+                                
+                                if (nrow(x) == 0) {
+                                        return(NULL)
+                                }
+                                
+                                x <- suppressWarnings(
+                                        sf::st_crop(
+                                                x,
+                                                tile_bbox
+                                        )
+                                )
+                                
+                                x <- x[
+                                        !sf::st_is_empty(x),
+                                ]
+                                
+                                if (nrow(x) == 0) {
+                                        return(NULL)
+                                }
+                                
+                                # Keep geometry only.
+                                x[
+                                        ,
+                                        0,
+                                        drop = FALSE
+                                ]
+                        }
+                ) |>
+                        purrr::compact()
+                
+                if (length(polygon_list) == 0) {
+                        return(NULL)
+                }
+                
+                dplyr::bind_rows(
+                        polygon_list
                 )
         }
         
-        result[[coverage_name]] <- pmin(
-                100,
-                pmax(
-                        0,
-                        values
+        
+        #### Internal helper: calculate coverage ####
+        
+        calculate_coverage <- function(
+                x,
+                variable_name) {
+                
+                if (
+                        is.null(x) ||
+                        nrow(x) == 0
+                ) {
+                        return(
+                                rep(
+                                        0,
+                                        nrow(grid_tile)
+                                )
+                        )
+                }
+                
+                polygon_union <- sf::st_union(
+                        sf::st_geometry(x)
                 )
+                
+                polygon_union <- sf::st_sf(
+                        value = 1,
+                        geometry = polygon_union,
+                        crs = sf::st_crs(grid)
+                )
+                
+                coverage_raster <- terra::rasterize(
+                        terra::vect(
+                                polygon_union
+                        ),
+                        template,
+                        field = "value",
+                        background = 0,
+                        cover = TRUE
+                )
+                
+                coverage_grid <- terra::aggregate(
+                        coverage_raster,
+                        fact = fact,
+                        fun = "mean",
+                        na.rm = TRUE) * 100
+                
+                variable_name <- names(coverage_grid) 
+                
+                values <- terra::extract(
+                        coverage_grid,
+                        grid_points_vect
+                )[[variable_name]]
+                
+                if (anyNA(values)) {
+                        stop(
+                                "Missing coverage values for '",
+                                variable_name,
+                                "' in tile ",
+                                tile_name,
+                                "."
+                        )
+                }
+                
+                if (
+                        any(
+                                values < -1e-6 |
+                                values > 100 + 1e-6
+                        )
+                ) {
+                        stop(
+                                "Coverage outside the expected ",
+                                "0-100% range for '",
+                                variable_name,
+                                "'."
+                        )
+                }
+                
+                pmin(
+                        100,
+                        pmax(
+                                0,
+                                values
+                        )
+                )
+        }
+        
+        
+        #### Initialise result ####
+        
+        result <- data.frame(
+                grid_tile[[id]],
+                check.names = FALSE
+        )
+        
+        names(result) <- id
+        
+        
+        #### Calculate polygon coverages ####
+        
+        for (
+                coverage_name in
+                names(coverage_sources)
+        ) {
+                
+                message(
+                        "Calculating ",
+                        coverage_name,
+                        "..."
+                )
+                
+                polygons_tile <- read_tile_polygons(
+                        coverage_sources[[coverage_name]]
+                )
+                
+                if (!is.null(polygons_tile)) {
+                        message(
+                                "Polygon features: ",
+                                format(
+                                        nrow(polygons_tile),
+                                        big.mark = ","
+                                )
+                        )
+                }
+                
+                result[[coverage_name]] <-
+                        calculate_coverage(
+                                polygons_tile,
+                                coverage_name
+                        )
+                
+                rm(
+                        polygons_tile
+                )
+        }
+        
+        
+        #### Calculate terrestrial surface coverage ####
+        
+        message(
+                "Calculating land_cov..."
+        )
+        
+        boundary_tile <- suppressWarnings(
+                sf::st_crop(
+                        boundary,
+                        tile_bbox
+                )
+        )
+        
+        boundary_tile <- boundary_tile[
+                !sf::st_is_empty(
+                        boundary_tile
+                ),
+        ]
+        
+        result$land_cov <- calculate_coverage(
+                boundary_tile,
+                "land_cov"
         )
         
         
@@ -1082,13 +1185,13 @@ process_coverage_tile <- function(
         )
         
         
-        #### Release large temporary objects ####
+        #### Release temporary objects ####
         
         rm(
-                polygons_tile,
-                polygon_union,
-                coverage_raster,
-                coverage_grid
+                boundary_tile,
+                grid_points,
+                grid_points_vect,
+                template
         )
         
         gc()

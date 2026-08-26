@@ -2,17 +2,22 @@
 
 library(tidyverse)
 library(sf)
-library(terra)
 
 source("Source_PAs.R")
 
 
-#### 02. Input paths ####
+#### 02. Paths ####
 
 grid_file <- file.path(
         "data",
         "EU_grid",
         "europe_10km.shp"
+)
+
+land_file <- file.path(
+        "data",
+        "EU_boundary",
+        "EU_boundary.gpkg"
 )
 
 out_dir <- file.path(
@@ -24,6 +29,11 @@ out_dir <- file.path(
 crop_dir <- file.path(
         out_dir,
         "cropped"
+)
+
+tile_dir <- file.path(
+        out_dir,
+        "tiles"
 )
 
 wdpa_crop_files <- file.path(
@@ -49,42 +59,14 @@ n2k_eea_crop_file <- file.path(
         "Natura2000_end2024_Europe.gpkg"
 )
 
-
-# check inputs
-
-input_check <- c(
-        grid = file.exists(grid_file),
-        wdpa_0 = file.exists(wdpa_crop_files[1]),
-        wdpa_1 = file.exists(wdpa_crop_files[2]),
-        wdpa_2 = file.exists(wdpa_crop_files[3]),
-        wdpa_n2k_0 = file.exists(wdpa_n2k_files[1]),
-        wdpa_n2k_1 = file.exists(wdpa_n2k_files[2]),
-        wdpa_n2k_2 = file.exists(wdpa_n2k_files[3]),
-        n2k_eea = file.exists(n2k_eea_crop_file)
-)
-
-if (!all(input_check)) {
-        stop(
-                "One or more derived PA files are missing. ",
-                "Run 01_prepare_PA_vectors.R first."
-        )
-}
-
-
-#### 03. Output paths ####
-
-tile_dir <- file.path(
-        out_dir,
-        "tiles"
-)
-
 dir.create(
         tile_dir,
         recursive = TRUE,
         showWarnings = FALSE
 )
 
-#### 04. Analysis parameters ####
+
+#### 03. Analysis parameters ####
 
 crs_area <- 3035
 
@@ -94,21 +76,71 @@ tile_size <- 200000
 
 id_col <- "CellCode"
 
-#### 05. Load grid and check geometry ####
+coverage_sources <- list(
+        total_pa_cov = wdpa_crop_files,
+        n2k_wdpa_cov = wdpa_n2k_files,
+        n2k_eea_cov = n2k_eea_crop_file
+)
 
-# The raster approach below assumes that the vector layer contains
-# complete 10 x 10 km grid cells.
-#
-# Coastal cells may later be corrected using a terrestrial land mask,
-# but the underlying grid geometries should still be full squares.
+coverage_cols <- c(
+        names(coverage_sources),
+        "land_cov"
+)
+
+tolerance <- 0.05
+
+
+#### 04. Check input files ####
+
+input_files <- c(
+        grid_file,
+        land_file,
+        unlist(
+                coverage_sources,
+                use.names = FALSE
+        )
+)
+
+missing_files <- input_files[
+        !file.exists(input_files)
+]
+
+if (length(missing_files) > 0) {
+        stop(
+                "Missing input files:\n",
+                paste(
+                        missing_files,
+                        collapse = "\n"
+                )
+        )
+}
+
+
+#### 05. Load grid and terrestrial boundary ####
 
 grid_10km <- st_read(
         grid_file,
-        quiet = TRUE) |>
+        quiet = TRUE
+) |>
         st_make_valid() |>
         st_transform(crs_area)
 
-#### Check grid identifier ####
+land_boundary <- st_read(
+        land_file,
+        quiet = TRUE
+) |>
+        repair_geometries() |>
+        st_transform(crs_area)
+
+# Geometry only: country attributes are not needed
+land_boundary <- land_boundary[
+        ,
+        0,
+        drop = FALSE
+]
+
+
+#### 06. Check grid ####
 
 if (!id_col %in% names(grid_10km)) {
         stop(
@@ -124,107 +156,70 @@ if (anyDuplicated(grid_10km[[id_col]])) {
         )
 }
 
-
-grid_areas <- as.numeric(
-        st_area(grid_10km))
-
-expected_area <- grid_resolution^2
-
-relative_area_error <- abs(
-        grid_areas - expected_area
-) / expected_area
-
-cat(
-        "\nMedian grid-cell area:",
-        median(grid_areas, na.rm = TRUE) / 1e6,
-        "km2\n"
+area_error <- max(
+        abs(
+                as.numeric(
+                        st_area(grid_10km)
+                ) -
+                        grid_resolution^2
+        ) /
+                grid_resolution^2,
+        na.rm = TRUE
 )
 
-cat(
-        "Maximum relative deviation from 100 km2:",
-        max(relative_area_error, na.rm = TRUE),
-        "\n"
-)
-
-if (max(relative_area_error, na.rm = TRUE) > 0.001) {
+if (area_error > 0.001) {
         warning(
-                "Some grid polygons differ substantially from 100 km2. ",
-                "Check whether the grid contains clipped cells before proceeding."
+                "Some grid polygons differ substantially ",
+                "from 100 km2."
         )
 }
-
-# The temporary raster resolution must divide exactly into 10 km
 
 if (grid_resolution %% raster_resolution != 0) {
         stop(
-                "The raster resolution must divide exactly into the ",
-                "10-km grid resolution."
+                "raster_resolution must divide exactly ",
+                "into grid_resolution."
         )
 }
 
-aggregation_factor <- as.integer(
-        grid_resolution / raster_resolution
-)
+if (tile_size %% grid_resolution != 0) {
+        stop(
+                "tile_size must be an exact multiple ",
+                "of grid_resolution."
+        )
+}
 
-cat(
-        "Raster cells per grid-cell side:",
-        aggregation_factor,
-        "\n"
-)
 
-cat(
-        "Raster cells per 10-km grid cell:",
-        aggregation_factor^2,
-        "\n"
-)
-
-#### 06. Create spatial processing tiles ####
-
-# Tile boundaries are defined relative to the actual origin of
-# the 10-km grid, rather than to an arbitrary EPSG:3035 origin.
-#
-# Because tile_size is an exact multiple of 10 km, tile boundaries
-# remain aligned with the original grid.
+#### 07. Create processing tiles ####
 
 grid_bbox <- st_bbox(
         grid_10km
 )
 
-grid_origin_x <- as.numeric(
-        grid_bbox["xmin"]
-)
-
-grid_origin_y <- as.numeric(
-        grid_bbox["ymin"]
-)
-
-if (tile_size %% grid_resolution != 0) {
-        stop(
-                "tile_size must be an exact multiple of ",
-                "the 10-km grid resolution."
-        )
-}
-
-grid_centroids <- st_centroid(
-        grid_10km
-)
-
 xy <- st_coordinates(
-        grid_centroids
+        st_centroid(
+                grid_10km
+        )
 )
 
 grid_10km <- grid_10km |>
         mutate(
-                .cx = xy[, 1],
-                .cy = xy[, 2],
-                
                 tile_x = floor(
-                        (.cx - grid_origin_x) /
+                        (
+                                xy[, 1] -
+                                        as.numeric(
+                                                grid_bbox["xmin"]
+                                        )
+                        ) /
                                 tile_size
                 ),
                 
                 tile_y = floor(
-                        (.cy - grid_origin_y) /
+                        (
+                                xy[, 2] -
+                                        as.numeric(
+                                                grid_bbox["ymin"]
+                                        )
+                        ) /
                                 tile_size
                 ),
                 
@@ -239,17 +234,71 @@ tiles <- unique(
         grid_10km$tile_id
 )
 
-cat(
-        "\nNumber of processing tiles:",
-        length(tiles),
-        "\n"
+message(
+        "Processing tiles: ",
+        length(tiles)
 )
 
 
-#### 07. Select a representative tile for testing ####
+#### 08. Coverage validation ####
 
-# Use the tile containing the largest number of grid cells,
-# rather than simply taking the first tile in the dataset.
+validate_coverage <- function(
+                x,
+                expected_rows) {
+        
+        values <- as.matrix(
+                x[
+                        coverage_cols
+                ]
+        )
+        
+        c(
+                correct_rows =
+                        nrow(x) == expected_rows,
+                
+                unique_cells =
+                        n_distinct(
+                                x[[id_col]]
+                        ) == expected_rows,
+                
+                no_missing =
+                        !anyNA(values),
+                
+                valid_range =
+                        all(
+                                values >= 0 &
+                                        values <= 100,
+                                na.rm = TRUE
+                        ),
+                
+                wdpa_internal_consistency =
+                        all(
+                                x$n2k_wdpa_cov <=
+                                        x$total_pa_cov +
+                                        tolerance,
+                                na.rm = TRUE
+                        ),
+                
+                terrestrial_consistency =
+                        all(
+                                x$total_pa_cov <=
+                                        x$land_cov +
+                                        tolerance &
+                                        
+                                        x$n2k_wdpa_cov <=
+                                        x$land_cov +
+                                        tolerance &
+                                        
+                                        x$n2k_eea_cov <=
+                                        x$land_cov +
+                                        tolerance,
+                                na.rm = TRUE
+                        )
+        )
+}
+
+
+#### 09. Test representative tile ####
 
 tile_test <- grid_10km |>
         st_drop_geometry() |>
@@ -258,163 +307,53 @@ tile_test <- grid_10km |>
                 sort = TRUE
         ) |>
         slice(1) |>
-        pull(
-                tile_id
-        )
+        pull(tile_id)
 
-cat(
-        "\nTest tile:",
-        tile_test,
-        "\n"
+message(
+        "Test tile: ",
+        tile_test
 )
 
-
-#### 08. Test total WDPA coverage ####
-
-test_wdpa_total <- process_coverage_tile(
+test_coverage <- process_coverage_tile(
         tile_name = tile_test,
         grid = grid_10km,
-        vector_files = wdpa_crop_files,
-        output_name = "TEST_WDPA_total",
-        coverage_name = "total_pa_cov",
+        coverage_sources = coverage_sources,
+        boundary = land_boundary,
+        output_name = "TEST_PA_coverage",
+        tile_dir = tile_dir,
         id = id_col,
-        raster_res = raster_resolution,
-        overwrite = TRUE
-)
-
-
-#### 09. Test Natura 2000 coverage from WDPA ####
-
-test_wdpa_n2k <- process_coverage_tile(
-        tile_name = tile_test,
-        grid = grid_10km,
-        vector_files = wdpa_n2k_files,
-        output_name = "TEST_WDPA_N2K",
-        coverage_name = "n2k_wdpa_cov",
-        id = id_col,
-        raster_res = raster_resolution,
-        overwrite = TRUE
-)
-
-
-#### 10. Test official EEA Natura 2000 coverage ####
-
-test_eea_n2k <- process_coverage_tile(
-        tile_name = tile_test,
-        grid = grid_10km,
-        vector_files = n2k_eea_crop_file,
-        output_name = "TEST_EEA_N2K",
-        coverage_name = "n2k_eea_cov",
-        id = id_col,
+        grid_res = grid_resolution,
         raster_res = raster_resolution,
         overwrite = TRUE
 )
 
 print(
         summary(
-                test_eea_n2k$n2k_eea_cov
-        )
-)
-
-
-#### 11. Compare test-tile results ####
-
-test_comparison <- test_wdpa_total |>
-        left_join(
-                test_wdpa_n2k,
-                by = id_col
-        ) |>
-        left_join(
-                test_eea_n2k,
-                by = id_col
-        ) |>
-        mutate(
-                n2k_difference =
-                        n2k_wdpa_cov -
-                        n2k_eea_cov,
-                
-                n2k_absolute_difference =
-                        abs(
-                                n2k_difference
-                        )
-        )
-
-print(
-        summary(
-                test_comparison[
-                        c(
-                                "total_pa_cov",
-                                "n2k_wdpa_cov",
-                                "n2k_eea_cov",
-                                "n2k_difference"
-                        )
+                test_coverage[
+                        coverage_cols
                 ]
         )
 )
 
-
-#### 12. Validate test tile ####
-
-n_test_cells <- sum(
-        grid_10km$tile_id == tile_test
+test_checks <- validate_coverage(
+        test_coverage,
+        sum(
+                grid_10km$tile_id ==
+                        tile_test
+        )
 )
 
-test_checks <- c(
-        
-        correct_rows =
-                nrow(test_comparison) == n_test_cells,
-        
-        unique_cells =
-                n_distinct(test_comparison[[id_col]]) == n_test_cells,
-        
-        no_missing =
-                !anyNA(
-                        test_comparison[
-                                c(
-                                        "total_pa_cov",
-                                        "n2k_wdpa_cov",
-                                        "n2k_eea_cov"
-                                )
-                        ]
-                ),
-        
-        wdpa_range =
-                all(
-                        test_comparison$total_pa_cov >= 0 &
-                                test_comparison$total_pa_cov <= 100
-                ),
-        
-        wdpa_n2k_range =
-                all(
-                        test_comparison$n2k_wdpa_cov >= 0 &
-                                test_comparison$n2k_wdpa_cov <= 100
-                ),
-        
-        eea_n2k_range =
-                all(
-                        test_comparison$n2k_eea_cov >= 0 &
-                                test_comparison$n2k_eea_cov <= 100
-                ),
-        
-        wdpa_internal_consistency =
-                all(
-                        test_comparison$n2k_wdpa_cov <=
-                                test_comparison$total_pa_cov + 0.05
-                )
+print(
+        test_checks
 )
-
-print(test_checks)
 
 if (!all(test_checks)) {
-        
-        failed_checks <- names(
-                test_checks
-        )[!test_checks]
-        
         stop(
                 "\nTest tile validation failed:\n",
                 paste(
-                        failed_checks,
+                        names(test_checks)[
+                                !test_checks
+                        ],
                         collapse = "\n"
                 ),
                 "\n\nFull analysis aborted."
@@ -422,114 +361,103 @@ if (!all(test_checks)) {
 }
 
 message(
-        "\nTest tile successfully validated.",
-        "\nStarting full European analysis..."
+        "Test successfully validated. ",
+        "Starting full analysis..."
 )
 
-#### 13. Run the full European analysis ####
 
-# Total WDPA protected-area coverage
-wdpa_total_coverage <- map_dfr(
+#### 10. Calculate European coverage ####
+
+coverage <- map_dfr(
         tiles,
         ~ process_coverage_tile(
                 tile_name = .x,
                 grid = grid_10km,
-                vector_files = wdpa_crop_files,
-                output_name = "WDPA_total",
-                coverage_name = "total_pa_cov",
+                coverage_sources = coverage_sources,
+                boundary = land_boundary,
+                output_name = "PA_coverage",
+                tile_dir = tile_dir,
                 id = id_col,
+                grid_res = grid_resolution,
                 raster_res = raster_resolution
         )
 )
 
-# Natura 2000 coverage identified within WDPA
-wdpa_n2k_coverage <- map_dfr(
-        tiles,
-        ~ process_coverage_tile(
-                tile_name = .x,
-                grid = grid_10km,
-                vector_files = wdpa_n2k_files,
-                output_name = "WDPA_N2K",
-                coverage_name = "n2k_wdpa_cov",
-                id = id_col,
-                raster_res = raster_resolution
-        )
+
+#### 11. Validate complete output ####
+
+coverage_checks <- validate_coverage(
+        coverage,
+        nrow(grid_10km)
 )
 
-# Official EEA Natura 2000 coverage
-eea_n2k_coverage <- map_dfr(
-        tiles,
-        ~ process_coverage_tile(
-                tile_name = .x,
-                grid = grid_10km,
-                vector_files = n2k_eea_crop_file,
-                output_name = "EEA_N2K",
-                coverage_name = "n2k_eea_cov",
-                id = id_col,
-                raster_res = raster_resolution
-        )
+print(
+        coverage_checks
 )
 
-#### 14. Check complete coverage outputs ####
-
-coverage_checks <- tibble(
-        dataset = c(
-                "WDPA total",
-                "WDPA Natura 2000",
-                "EEA Natura 2000"
-        ),
-        n_rows = c(
-                nrow(wdpa_total_coverage),
-                nrow(wdpa_n2k_coverage),
-                nrow(eea_n2k_coverage)
-        ),
-        n_unique_cells = c(
-                n_distinct(wdpa_total_coverage[[id_col]]),
-                n_distinct(wdpa_n2k_coverage[[id_col]]),
-                n_distinct(eea_n2k_coverage[[id_col]])
-        ),
-        n_missing = c(
-                sum(is.na(wdpa_total_coverage$total_pa_cov)),
-                sum(is.na(wdpa_n2k_coverage$n2k_wdpa_cov)),
-                sum(is.na(eea_n2k_coverage$n2k_eea_cov))
-        )
-)
-
-print(coverage_checks)
-
-if (
-        any(coverage_checks$n_rows != nrow(grid_10km)) ||
-        any(coverage_checks$n_unique_cells != nrow(grid_10km)) ||
-        any(coverage_checks$n_missing > 0)
-) {
+if (!all(coverage_checks)) {
         stop(
-                "Coverage outputs are incomplete or contain duplicated/missing grid cells."
+                "\nFull coverage validation failed:\n",
+                paste(
+                        names(coverage_checks)[
+                                !coverage_checks
+                        ],
+                        collapse = "\n"
+                )
         )
 }
 
 
-#### 15. Join coverage metrics to the original grid ####
+#### 12. Join coverage to grid ####
 
 grid_pa <- grid_10km |>
         select(
-                -starts_with("."),
                 -tile_x,
                 -tile_y,
                 -tile_id
         ) |>
         left_join(
-                wdpa_total_coverage,
-                by = id_col
-        ) |>
-        left_join(
-                wdpa_n2k_coverage,
-                by = id_col
-        ) |>
-        left_join(
-                eea_n2k_coverage,
+                coverage,
                 by = id_col
         ) |>
         mutate(
+                # PA coverage relative to terrestrial surface
+                total_pa_land_cov =
+                        if_else(
+                                land_cov > 0,
+                                pmin(
+                                        100,
+                                        100 *
+                                                total_pa_cov /
+                                                land_cov
+                                ),
+                                NA_real_
+                        ),
+                
+                n2k_wdpa_land_cov =
+                        if_else(
+                                land_cov > 0,
+                                pmin(
+                                        100,
+                                        100 *
+                                                n2k_wdpa_cov /
+                                                land_cov
+                                ),
+                                NA_real_
+                        ),
+                
+                n2k_eea_land_cov =
+                        if_else(
+                                land_cov > 0,
+                                pmin(
+                                        100,
+                                        100 *
+                                                n2k_eea_cov /
+                                                land_cov
+                                ),
+                                NA_real_
+                        ),
+                
                 n2k_difference =
                         n2k_wdpa_cov -
                         n2k_eea_cov,
@@ -541,45 +469,21 @@ grid_pa <- grid_10km |>
         )
 
 
-#### 16. Final quality control ####
-
-cat(
-        "\nTotal WDPA coverage:\n"
-)
+#### 13. Final quality control ####
 
 print(
         summary(
-                grid_pa$total_pa_cov
-        )
-)
-
-cat(
-        "\nWDPA Natura 2000 coverage:\n"
-)
-
-print(
-        summary(
-                grid_pa$n2k_wdpa_cov
-        )
-)
-
-cat(
-        "\nEEA Natura 2000 coverage:\n"
-)
-
-print(
-        summary(
-                grid_pa$n2k_eea_cov
-        )
-)
-
-cat(
-        "\nDifference between WDPA and EEA Natura 2000:\n"
-)
-
-print(
-        summary(
-                grid_pa$n2k_difference
+                grid_pa |>
+                        st_drop_geometry() |>
+                        select(
+                                all_of(
+                                        coverage_cols
+                                ),
+                                total_pa_land_cov,
+                                n2k_wdpa_land_cov,
+                                n2k_eea_land_cov,
+                                n2k_difference
+                        )
         )
 )
 
@@ -623,43 +527,36 @@ print(
 )
 
 
-#### 17. Save final outputs ####
+#### 14. Save outputs ####
+
+output_base <- file.path(
+        out_dir,
+        "europe_10km_protected_area_coverage"
+)
 
 st_write(
         grid_pa,
-        file.path(
-                out_dir,
-                "europe_10km_protected_area_coverage.gpkg"
+        paste0(
+                output_base,
+                ".gpkg"
         ),
         delete_dsn = TRUE,
         quiet = TRUE
 )
 
-write.csv(
+write_csv(
         grid_pa |>
-                st_drop_geometry() |>
-                select(
-                        all_of(id_col),
-                        total_pa_cov,
-                        n2k_wdpa_cov,
-                        n2k_eea_cov,
-                        n2k_difference,
-                        n2k_absolute_difference
-                ),
-        file.path(
-                out_dir,
-                "europe_10km_protected_area_coverage.csv"
-        ),
-        row.names = FALSE
+                st_drop_geometry(),
+        paste0(
+                output_base,
+                ".csv"
+        )
 )
 
-write.csv(
+write_csv(
         n2k_comparison_summary,
         file.path(
                 out_dir,
                 "N2K_WDPA_vs_EEA_summary.csv"
-        ),
-        row.names = FALSE
+        )
 )
-
-
