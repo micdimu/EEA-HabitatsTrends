@@ -3,7 +3,7 @@ library(biscale)
 
 #### temporal functions #####
 
-temporal_bgl <- function(id) {
+temporal_bgl <- function(id, comm_mat, meta) {
         
         p()
         
@@ -28,6 +28,144 @@ temporal_bgl <- function(id) {
                 shared_species = shared,
                 lost_species = lost,
                 gained_species = gained
+        )
+}
+
+temporal_bgl_group <- function(id, comm_mat, meta, group) {
+        
+        rows <- meta$cell_id == id
+        
+        m <- comm_mat[rows, , drop = FALSE]
+        m <- m[order(meta$period[rows]), , drop = FALSE]
+        
+        a <- m[1, ]
+        b <- m[2, ]
+        
+        # Codici habitat come caratteri
+        group$habitat <- as.character(group$habitat)
+        
+        # Calcolo separato per ciascun taxGroup
+        risultati <- lapply(unique(group$taxGroup), function(g) {
+                
+                habitat_g <- group$habitat[group$taxGroup == g]
+                
+                # Colonne della matrice appartenenti al taxGroup
+                cols <- colnames(comm_mat) %in% habitat_g
+                
+                a_g <- a[cols]
+                b_g <- b[cols]
+                
+                shared <- sum(a_g == 1 & b_g == 1)
+                lost   <- sum(a_g == 1 & b_g == 0)
+                gained <- sum(a_g == 0 & b_g == 1)
+                
+                totale <- shared + lost + gained
+                
+                beta_jaccard <- if (totale == 0) {
+                        NA_real_
+                } else {
+                        (lost + gained) / totale
+                }
+                
+                data.frame(
+                        cell_id = id,
+                        taxGroup = g,
+                        beta_jaccard = beta_jaccard,
+                        richness_2007_2012 = sum(a_g),
+                        richness_2013_2018 = sum(b_g),
+                        shared_species = shared,
+                        lost_species = lost,
+                        gained_species = gained
+                )
+        })
+        
+        do.call(rbind, risultati)
+}
+
+
+#### temporal each habitat ####
+
+habitat_temporal_trend <- function(comm_mat, meta) {
+        
+        # Controlli essenziali
+        if (nrow(comm_mat) != nrow(meta)) {
+                stop("comm_mat e meta devono avere lo stesso numero di righe")
+        }
+        
+        periods <- sort(unique(meta$period))
+        
+        if (length(periods) != 2) {
+                stop("meta$period deve contenere esattamente due periodi")
+        }
+        
+        if (anyDuplicated(meta[c("cell_id", "period")])) {
+                stop("Ogni combinazione cell_id-period deve comparire una sola volta")
+        }
+        
+        # Celle presenti in almeno uno dei due periodi
+        cells <- unique(meta$cell_id)
+        
+        # Matrici vuote: celle × habitat
+        m1 <- matrix(
+                0,
+                nrow = length(cells),
+                ncol = ncol(comm_mat),
+                dimnames = list(cells, colnames(comm_mat))
+        )
+        
+        m2 <- m1
+        
+        rows1 <- meta$period == periods[1]
+        rows2 <- meta$period == periods[2]
+        
+        # Inserisce i dati allineandoli per cell_id
+        m1[match(meta$cell_id[rows1], cells), ] <-
+                as.matrix(comm_mat[rows1, , drop = FALSE])
+        
+        m2[match(meta$cell_id[rows2], cells), ] <-
+                as.matrix(comm_mat[rows2, , drop = FALSE])
+        
+        # Trasformazione in presenza/assenza
+        m1 <- m1 > 0
+        m2 <- m2 > 0
+        
+        ncelle_2012 <- colSums(m1)
+        ncelle_2018 <- colSums(m2)
+        
+        shared <- colSums(m1 & m2)
+        loss   <- colSums(m1 & !m2)
+        gain   <- colSums(!m1 & m2)
+        
+        netto <- gain - loss
+        
+        data.frame(
+                habitat = colnames(comm_mat),
+                Ncelle_2012 = ncelle_2012,
+                Ncelle_2018 = ncelle_2018,
+                shared = shared,
+                loss = loss,
+                gain = gain,
+                netto = netto,
+                
+                loss_pct_2012 = ifelse(
+                        ncelle_2012 == 0,
+                        NA_real_,
+                        loss / ncelle_2012 * 100
+                ),
+                
+                gain_pct_2012 = ifelse(
+                        ncelle_2012 == 0,
+                        NA_real_,
+                        gain / ncelle_2012 * 100
+                ),
+                
+                netto_pct_2012 = ifelse(
+                        ncelle_2012 == 0,
+                        NA_real_,
+                        netto / ncelle_2012 * 100
+                ),
+                
+                row.names = NULL
         )
 }
 

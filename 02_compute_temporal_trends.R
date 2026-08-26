@@ -9,15 +9,14 @@ library(progressr)
 
 #### load and check data ####
 
-st_layers("eea_v_3035_10_mio_art17-2013-2018_p_2013-2018_v01_r00/Art17-2013-2018_GPKG/art17_2013_2018_public.gpkg")
-
+st_layers("data/report_eea/eea_2007-2012/Art17-2007-2012_GPKG/art17_0712_public_r02.gpkg")
+st_layers("data/report_eea/eea_2013-2018/Art17-2013-2018_GPKG/art17_2013_2018_public.gpkg")
 
 report2012 <- st_read("data/report_eea/eea_2007-2012/Art17-2007-2012_GPKG/art17_0712_public_r02.gpkg",
               layer = "Art17_habitats_distribution_2007_2012_EU")
 
 report2018 <- st_read("data/report_eea/eea_2013-2018/Art17-2013-2018_GPKG/art17_2013_2018_public.gpkg",
               layer = "Art17_habitats_distribution_2013_2018_EU")
-
 
 grid_eu <- st_read("data/EU_grid/europe_10km.shp")
 
@@ -108,7 +107,7 @@ cells <- meta %>%
 # 
 # temporal_beta <- with_progress({
 #         p <- progressor(along = cells)
-#         future_map_dfr(cells, temporal_bgl)
+#         future_map_dfr(cells, temporal_bgl, comm_mat = comm_mat, meta = meta)
 # })
 
 # # if(!dir.exists("processed")){
@@ -119,6 +118,38 @@ cells <- meta %>%
 #           "processed/temporal_beta_cell_by_cell.csv",
 #           row.names = FALSE)
 
-temporal_beta <- read.csv("processed/temporal_beta_cell_by_cell.csv")
+# temporal_beta <- read.csv("processed/temporal_beta_cell_by_cell.csv")
 
-temporal_beta$beta_jaccard |> hist()
+# temporal_beta$beta_jaccard |> hist()
+
+#### temporal trends per each habitat group ####
+
+cc <- report2012 |> 
+        as.data.frame() |> 
+        select(habitat = habitatcodeEU, taxGroup) |> 
+        distinct() |> 
+        drop_na()
+
+unique(report2018$habitatcode)[!(unique(report2018$habitatcode) %in% cc$habitat)]
+# new habitats defined between the two reports 32A0 e 6540 - not included in the analysis
+
+
+temporal_beta_group <- with_progress({
+        p <- progressor(along = cells)
+        future_map_dfr(cells[1:10], temporal_bgl_group, comm_mat = comm_mat, meta = meta, group = cc)
+})
+
+write.csv(temporal_beta_group,
+          "processed/temporal_group_cell_by_cell.csv",
+          row.names = FALSE)
+
+#### compute temporal trends for each habitat ####
+
+habitat_trend <- habitat_temporal_trend(
+        comm_mat = comm_mat,
+        meta = meta
+)
+
+write.csv(habitat_trend,
+          "processed/temporal_each_habitat.csv",
+          row.names = FALSE)
