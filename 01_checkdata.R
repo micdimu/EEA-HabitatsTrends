@@ -107,7 +107,7 @@ rownames(comm_mat) <- comm$sample_id
 # 
 # r_beta <- with_progress({
 #         p <- progressor(along = cells)
-#         future_map_dfr(cells, temporal_bgl)
+#         future_map_dfr(cells, temporal_bgl, comm_mat = comm_mat, meta = meta)
 # })
 # if(!dir.exists("processed")){
 #         dir.create("processed")
