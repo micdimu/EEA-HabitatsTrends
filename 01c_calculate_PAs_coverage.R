@@ -133,11 +133,7 @@ land_boundary <- st_read(
         st_transform(crs_area)
 
 # Geometry only: country attributes are not needed
-land_boundary <- land_boundary[
-        ,
-        0,
-        drop = FALSE
-]
+land_boundary <- land_boundary[, 0, drop = FALSE]
 
 
 #### 06. Check grid ####

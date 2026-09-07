@@ -10,22 +10,35 @@ source("Source.R")
 
 habitat_trend <- read.csv("processed/temporal_each_habitat.csv") 
 
-habitat_trends |> 
+habitat_trend |> 
         filter(netto_pct_2012 < 250) |> 
-        ggplot(mapping = aes(x = log(Ncelle_2012), y = loss)) +
-  geom_smooth(method = "lm") +
-  geom_point() +
-  theme_bw() 
+        pivot_longer(contains("pct")) |> 
+        ggplot(mapping = aes(x = log(Ncelle_2012), y = value)) +
+        geom_point() +
+        theme_bw() +
+        facet_wrap(~name)
+        
+        
+habitat_trend |> 
+        filter(netto_pct_2012 < 250) |> 
+        pivot_longer(c("netto", "loss", "gain")) |> 
+        ggplot(mapping = aes(x = log(Ncelle_2012), y = value)) +
+        geom_point() +
+        theme_bw() +
+        facet_wrap(~name)
 
-habitat_trends
+
+
+
+habitat_trend
 glm(
 netto ~ log(Ncelle_2012), 
-  data = habitat_trends |> 
+  data = habitat_trend |> 
           filter(netto_pct_2012 < 250) 
 ) |> 
         ggeffect() |> 
         plot()+
-        geom_point(data = habitat_trends |> 
+        geom_point(data = habitat_trend |> 
                      filter(netto_pct_2012 < 250), 
                    mapping = aes(x = Ncelle_2012, y = netto)) +
         theme_bw() +
