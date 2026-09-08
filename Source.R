@@ -807,3 +807,177 @@ bivariate_map <- function(data,
                 )
         )
 }
+
+# Create model-fit labels directly from fitted models
+make_fit_labels <- function(
+                null_model,
+                linear_model,
+                log_model,
+                y_range,
+                x_start = 2
+) {
+        
+        null_deviance <- deviance(null_model)
+        
+        fit_labels <- data.frame(
+                model = c("Linear", "Logarithmic"),
+                explained_deviance = 100 * c(
+                        1 - deviance(linear_model) / null_deviance,
+                        1 - deviance(log_model) / null_deviance
+                )
+        )
+        
+        # Add an asterisk only to the model with the highest explained deviance
+        fit_labels$asterisk <- ""
+        fit_labels$asterisk[which.max(
+                fit_labels$explained_deviance
+        )] <- "*"
+        
+        # Generate labels and positions within the response scale
+        fit_labels |>
+                mutate(
+                        label = sprintf(
+                                "%s (D² = %.3f%%)%s",
+                                model,
+                                explained_deviance,
+                                asterisk
+                        ),
+                        x_start = x_start,
+                        x_end = x_start + 5,
+                        x_text = x_start + 6.5,
+                        y = min(y_range) +
+                                c(0.12, 0.045) * diff(y_range)
+                )
+}
+
+# Create a common plotting function for the two biological responses
+
+make_h1_panel <- function(
+                binned_data,
+                predictions,
+                fit_labels,
+                y_label,
+                panel_tag
+) {
+        
+        ggplot() +
+                geom_point(
+                        data = binned_data,
+                        aes(
+                                x = protection,
+                                y = observed
+                        ),
+                        shape = 21,
+                        size = 1.5,
+                        stroke = 0.6,
+                        colour = "black",
+                        fill = "white"
+                ) +
+                geom_ribbon(
+                        data = predictions,
+                        aes(
+                                x = total_pa_land_cov,
+                                ymin = lower,
+                                ymax = upper,
+                                fill = model
+                        ),
+                        alpha = 0.12,
+                        colour = NA
+                ) +
+                geom_line(
+                        data = predictions,
+                        aes(
+                                x = total_pa_land_cov,
+                                y = fit,
+                                colour = model,
+                                linetype = model
+                        ),
+                        linewidth = 1.15
+                ) +
+                geom_segment(
+                        data = fit_labels,
+                        aes(
+                                x = x_start,
+                                xend = x_end,
+                                y = y,
+                                yend = y,
+                                colour = model,
+                                linetype = model
+                        ),
+                        linewidth = 1.1,
+                        inherit.aes = FALSE,
+                        show.legend = FALSE
+                ) +
+                geom_text(
+                        data = fit_labels,
+                        aes(
+                                x = x_text,
+                                y = y,
+                                label = label
+                        ),
+                        colour = "black",
+                        hjust = 0,
+                        vjust = 0.5,
+                        size = 3.1,
+                        inherit.aes = FALSE
+                ) +
+                scale_colour_manual(
+                        values = model_colours
+                ) +
+                scale_fill_manual(
+                        values = model_colours
+                ) +
+                scale_linetype_manual(
+                        values = model_lines
+                ) +
+                scale_x_continuous(
+                        limits = c(0, 100),
+                        breaks = seq(0, 100, by = 20),
+                        expand = expansion(
+                                mult = c(0.005, 0.01)
+                        )
+                ) +
+                scale_y_continuous(
+                        labels = label_percent(
+                                accuracy = 0.1
+                        ),
+                        expand = expansion(
+                                mult = c(0.05, 0.08)
+                        )
+                ) +
+                labs(
+                        tag = panel_tag,
+                        x = NULL,
+                        y = y_label
+                ) +
+                guides(
+                        colour = "none",
+                        fill = "none",
+                        linetype = "none"
+                ) +
+                theme_classic(
+                        base_size = 8
+                ) +
+                theme(
+                        axis.title.y = element_text(
+                                size = 11
+                        ),
+                        axis.text = element_text(
+                                colour = "black"
+                        ),
+                        plot.tag = element_text(
+                                face = "bold",
+                                size = 10
+                        ),
+                        plot.tag.position = c(
+                                0.01,
+                                0.99
+                        ),
+                        plot.margin = margin(
+                                3,
+                                8,
+                                3,
+                                5.5
+                        )
+                )
+}
