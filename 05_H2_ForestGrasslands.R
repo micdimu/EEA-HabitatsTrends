@@ -7,6 +7,7 @@ source("Source.R")
 
 #### Load data ####
 
+
 temporal_beta_group <- read.csv("processed/temporal_group_cell_by_cell.csv") |> 
         mutate(net_change = richness_2013_2018 - richness_2007_2012) |> 
         drop_na()

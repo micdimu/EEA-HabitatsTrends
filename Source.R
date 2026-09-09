@@ -503,7 +503,6 @@ bivariate_map <- function(data,
                           flip_axes = FALSE,
                           xlab = NULL,
                           ylab = NULL,
-                          title = NULL,
                           legend_position = c(
                                   left = 0.04,
                                   bottom = 0.68,
@@ -526,7 +525,6 @@ bivariate_map <- function(data,
         
         if (is.null(xlab)) xlab <- x_name
         if (is.null(ylab)) ylab <- y_name
-        if (is.null(title)) title <- paste(ylab, "and", xlab)
         
         # Se data è già sf, usa direttamente la sua geometria
         if (inherits(data, "sf") && is.null(geometry)) {
@@ -732,7 +730,6 @@ bivariate_map <- function(data,
                 biscale::bi_theme(
                         bg_color = "#FFFFFF"
                 ) +
-                ggplot2::labs(title = title) +
                 ggplot2::theme(
                         panel.background = ggplot2::element_rect(
                                 fill = "white",

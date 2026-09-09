@@ -32,20 +32,35 @@ beta_pa_map <- bivariate_map(
         x_breaks = c(10, 30, 70),
         y_breaks = c(0.25, 0.50, 0.75),
         xlab = "Protected areas (%)",
-        ylab = "Beta diversity (turnover)"
+        ylab = "Temporal Beta diversity",
+        pal = "DkBlue2",
 )
 
 beta_pa_map$plot
 
 layout <- c(
         area(t = 0, l = 0, b = 12, r = 12),
-        area(t = 2.5, l = 3, b = 3.5, r = 4)
+        area(t = 2.5, l = 1.8, b = 3.5, r = 2.8)
 )
 
-mapleg <- beta_pa_map$map + beta_pa_map$legend + plot_layout(design = layout)
+figure_1 <- beta_pa_map$map + beta_pa_map$legend + plot_layout(design = layout)
 
-mapleg
+figure_1
 
+ggsave(
+        filename = file.path(
+                "figures",
+                "Figure_1.tiff"
+        ),
+        plot = figure_1,
+        width = 180,
+        height = 165,
+        units = "mm",
+        dpi = 600,
+        device = "tiff",
+        compression = "lzw",
+        bg = "white"
+)
 
 #### H1 | Protected-area coverage and habitat change ####
 
@@ -744,17 +759,6 @@ if (requireNamespace("knitr", quietly = TRUE)) {
         )
 }
 
-# Export the summary table
-
-write.csv(
-        h1_model_table,
-        file = file.path(
-                "tables",
-                "Table_H1_model_results.csv"
-        ),
-        row.names = FALSE
-)
-
 ##### Publication-ready gt table ####
 
 # Prepare the data used in the formatted table
@@ -957,3 +961,32 @@ h1_model_gt <- h1_model_gt_data |>
 # Display the table in the Viewer
 
 h1_model_gt
+
+###### table export ######
+
+write.csv(
+        h1_model_results,
+        file = file.path(
+                "tables",
+                "Table_H1_model_results.csv"
+        ),
+        row.names = FALSE
+)
+
+# Formatted HTML table:
+# open it in a browser and copy-paste it into Word
+
+gt::gtsave(
+        data = h1_model_gt,
+        filename = "Table_H1_model_results.html",
+        path = "tables",
+        inline_css = TRUE
+)
+
+# Editable Word document
+
+gt::gtsave(
+        data = h1_model_gt,
+        filename = "Table_H1_model_results.docx",
+        path = "tables"
+)
