@@ -21,47 +21,6 @@ grid_pa <- st_read("data/PAs/derived/europe_10km_protected_area_coverage.gpkg")
 grid_T <- grid_pa |>
         right_join(temporal_beta, by = c("CellCode" = "cell_id")) 
 
-
-#### Figure 1 Bivariate map #####
-
-beta_pa_map <- bivariate_map(
-        data = grid_T,
-        geometry = grid_T,
-        x = total_pa_cov,
-        y = beta_jaccard,
-        x_breaks = c(10, 30, 70),
-        y_breaks = c(0.25, 0.50, 0.75),
-        xlab = "Protected areas (%)",
-        ylab = "Temporal Beta diversity",
-        pal = "DkBlue2",
-)
-
-beta_pa_map$plot
-
-layout <- c(
-        area(t = 0, l = 0, b = 12, r = 12),
-        area(t = 2.5, l = 1.8, b = 3.5, r = 2.8)
-)
-
-figure_1 <- beta_pa_map$map + beta_pa_map$legend + plot_layout(design = layout)
-
-figure_1
-
-ggsave(
-        filename = file.path(
-                "figures",
-                "Figure_1.tiff"
-        ),
-        plot = figure_1,
-        width = 180,
-        height = 165,
-        units = "mm",
-        dpi = 600,
-        device = "tiff",
-        compression = "lzw",
-        bg = "white"
-)
-
 #### H1 | Protected-area coverage and habitat change ####
 
 # General hypothesis ------------------------------------------------------
