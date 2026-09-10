@@ -136,7 +136,7 @@ unique(report2018$habitatcode)[!(unique(report2018$habitatcode) %in% cc$habitat)
 
 temporal_beta_group <- with_progress({
         p <- progressor(along = cells)
-        future_map_dfr(cells[1:10], temporal_bgl_group, comm_mat = comm_mat, meta = meta, group = cc)
+        future_map_dfr(cells, temporal_bgl_group, comm_mat = comm_mat, meta = meta, group = cc)
 })
 
 write.csv(temporal_beta_group,
