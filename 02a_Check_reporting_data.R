@@ -6,7 +6,7 @@ library(sf)
 library(furrr)
 library(progressr)
 
-source("Source.R")
+source("SourceCodes/Source02_DataPreparation.R")
 
 #### load and check data ####
 st_layers("data/report_eea/eea_2007-2012/Art17-2007-2012_GPKG/ART17_2007_2012_public_r01.gpkg")
