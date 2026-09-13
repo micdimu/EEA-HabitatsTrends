@@ -1,5 +1,3 @@
-# 06a | Prepare H3 data, fit models and save inputs for 06b.
-# Run from the project root.
 library(tidyverse)
 library(sf)
 library(glmmTMB)
@@ -8,10 +6,15 @@ library(glmmTMB)
 
 comm_mat <-  read.csv("processed/comm_mat.csv", row.names = 1, check.names = FALSE)
 
-meta <- comm_mat |> 
+meta <- comm_mat |>
         rownames_to_column("sample_id") |>
-        select(sample_id)  |> 
-        separate(sample_id, into = c("cell_id", "period"), sep = "_(?=20)")
+        select(sample_id) |>
+        separate(
+                sample_id,
+                into = c("cell_id", "period"),
+                sep = "_(?=20)",
+                extra = "merge"
+        )
 
 grid_pa <- st_read("data/PAs/derived/europe_10km_protected_area_coverage.gpkg")
 
