@@ -6,7 +6,7 @@ library(sf)
 library(furrr)
 library(progressr)
 
-
+source("Source.R")
 #### load and check data ####
 
 st_layers("data/report_eea/eea_2007-2012/Art17-2007-2012_GPKG/art17_0712_public_r02.gpkg")
@@ -91,6 +91,10 @@ comm_mat <- comm |>
 
 rownames(comm_mat) <- comm$sample_id
 
+# write.csv(comm_mat,
+#           "processed/comm_mat.csv",
+#           row.names = T)
+# comm_mat <-  read.csv("processed/comm_mat.csv", row.names = 1, check.names = FALSE)
 
 #### run the dissimilarity #####
 
@@ -145,11 +149,13 @@ write.csv(temporal_beta_group,
 
 #### compute temporal trends for each habitat ####
 
-habitat_trend <- habitat_temporal_trend(
-        comm_mat = comm_mat,
-        meta = meta
-)
+# habitat_trend <- habitat_temporal_trend(
+#         comm_mat = comm_mat,
+#         meta = meta
+# )
+# 
+# write.csv(habitat_trend,
+#           "processed/temporal_each_habitat.csv",
+#           row.names = FALSE)
 
-write.csv(habitat_trend,
-          "processed/temporal_each_habitat.csv",
-          row.names = FALSE)
+
