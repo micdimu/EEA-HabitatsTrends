@@ -556,3 +556,75 @@ write_csv(
                 "N2K_WDPA_vs_EEA_summary.csv"
         )
 )
+
+
+#### 15. Filter current PA coverage to EU27 before Croatia accession ####
+
+coverage_file <- file.path(
+        "data",
+        "PAs",
+        "derived",
+        "europe_10km_protected_area_coverage.gpkg"
+)
+
+output_file <- file.path(
+        "data",
+        "PAs",
+        "derived",
+        "europe_10km_protected_area_coverage_2012EU27.gpkg"
+)
+
+
+# EU27 Member States during the 2007-2012 reporting period
+
+eu27_2012 <- c(
+        "AUT", "BEL", "BGR", "CYP", "CZE", "DNK", "EST",
+        "FIN", "FRA", "DEU", "GRC", "HUN", "IRL", "ITA",
+        "LVA", "LTU", "LUX", "MLT", "NLD", "POL", "PRT",
+        "ROU", "SVK", "SVN", "ESP", "SWE", "GBR"
+)
+
+# Read data #
+grid_pa <- st_read(
+        coverage_file,
+        quiet = TRUE
+)
+
+land_boundary$ISO_A3
+
+land_boundary_EU27 <- land_boundary |>
+        filter(
+                ISO_A3 %in% eu27_2012
+        ) |>
+        st_make_valid() |>
+        st_transform(
+                st_crs(grid_pa)
+        ) |>
+        st_union()
+
+
+# Retain grid cells overlapping EU27 terrestrial territory
+
+grid_pa_eu27 <- st_filter(
+        grid_pa,
+        land_boundary_EU27,
+        .predicate = st_intersects
+)
+
+
+#### 16. Save EU27 before Croatia accession ####
+
+st_write(
+        grid_pa_eu27,
+        output_file,
+        delete_dsn = TRUE,
+        quiet = TRUE
+)
+
+cat(
+        "Original cells:",
+        nrow(grid_pa),
+        "\nEU27-2012 cells:",
+        nrow(grid_pa_eu27),
+        "\n"
+)
