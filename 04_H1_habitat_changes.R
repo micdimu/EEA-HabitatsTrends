@@ -1,14 +1,10 @@
 library(tidyverse)
 library(sf)
-library(terra)
-library(patchwork)
-library(ggeffects)
-library(mgcv)
 library(scales)
 library(patchwork)
 library(gt)
 
-source("Source.R")
+source("SourceCodes/Source04_H1.R")
 
 #### Load data ####
 
@@ -194,13 +190,13 @@ summary(h1b_log_model)
 # Create output directories when they do not already exist
 
 dir.create(
-        "figures",
+        "output/figures",
         recursive = TRUE,
         showWarnings = FALSE
 )
 
 dir.create(
-        "tables",
+        "output/tables",
         recursive = TRUE,
         showWarnings = FALSE
 )
@@ -274,44 +270,19 @@ prediction_grid <- data.frame(
 
 # Extract predictions and 95% confidence intervals from a fitted model
 
-get_model_predictions <- function(
-                model,
-                model_name,
-                new_data = prediction_grid
-) {
-        
-        prediction <- predict(
-                model,
-                newdata = new_data,
-                type = "link",
-                se.fit = TRUE
-        )
-        
-        new_data |>
-                mutate(
-                        model = model_name,
-                        fit = plogis(prediction$fit),
-                        lower = plogis(
-                                prediction$fit -
-                                        1.96 * prediction$se.fit
-                        ),
-                        upper = plogis(
-                                prediction$fit +
-                                        1.96 * prediction$se.fit
-                        )
-                )
-}
 
 # Habitat-loss predictions
 
 h1a_predictions <- bind_rows(
         get_model_predictions(
                 h1a_linear_model,
-                "Linear"
+                "Linear",
+                new_data = prediction_grid
         ),
         get_model_predictions(
                 h1a_log_model,
-                "Logarithmic"
+                "Logarithmic",
+                new_data = prediction_grid
         )
 )
 
@@ -320,11 +291,13 @@ h1a_predictions <- bind_rows(
 h1b_predictions <- bind_rows(
         get_model_predictions(
                 h1b_linear_model,
-                "Linear"
+                "Linear",
+                new_data = prediction_grid
         ),
         get_model_predictions(
                 h1b_log_model,
-                "Logarithmic"
+                "Logarithmic",
+                new_data = prediction_grid
         )
 )
 
@@ -340,7 +313,7 @@ model_lines <- c(
         "Logarithmic" = "22"
 )
 
-# make_fit_labels() is already defined in Source.R.
+# make_fit_labels() is already defined in R/Source_4_H1.R.
 #
 # It calculates explained deviance directly from the fitted models,
 # adds an asterisk to the model with the largest explained deviance,
@@ -378,7 +351,7 @@ h1b_fit_labels <- make_fit_labels(
         y_range = h1b_y_range
 )
 
-# make_h1_panel is already defined in Source.R.
+# make_h1_panel is already defined in R/Source_4_H1.R.
 # Panel a: probability of habitat loss
 
 panel_h1a <- make_h1_panel(
@@ -386,7 +359,9 @@ panel_h1a <- make_h1_panel(
         predictions = h1a_predictions,
         fit_labels = h1a_fit_labels,
         y_label = "Probability of habitat loss",
-        panel_tag = "a"
+        panel_tag = "a",
+        model_colours = model_colours,
+        model_lines = model_lines
 )
 
 # Panel b: temporal beta diversity
@@ -398,10 +373,12 @@ panel_h1b <- make_h1_panel(
         y_label = expression(
                 "Temporal " * beta * " diversity"
         ),
-        panel_tag = "b"
+        panel_tag = "b",
+        model_colours = model_colours,
+        model_lines = model_lines
 )
 
-# Bottom panel: terrestrial-area-weighted distribution of grid cells.
+# Bottom panel: unweighted distribution of grid cells.
 # The complete x axis is retained in all three panels, while the axis title
 # appears only below the bottom panel.
 
@@ -473,6 +450,7 @@ figure_2
 
 ggsave(
         filename = file.path(
+                "output",
                 "figures",
                 "Figure_2.tiff"
         ),
@@ -496,128 +474,6 @@ ggsave(
 # Explained deviance is the percentage of null deviance explained in-sample.
 # Predicted changes compare 0% and 100% protected terrestrial area.
 
-summarise_h1_models <- function(
-                hypothesis,
-                response,
-                null_model,
-                linear_model,
-                log_model
-) {
-        
-        models <- list(
-                linear_model,
-                log_model
-        )
-        
-        model_names <- c(
-                "Linear",
-                "Logarithmic"
-        )
-        
-        tests <- lapply(
-                models,
-                function(model) {
-                        anova(
-                                null_model,
-                                model,
-                                test = "F"
-                        )
-                }
-        )
-        
-        endpoint_predictions <- lapply(
-                models,
-                function(model) {
-                        plogis(
-                                predict(
-                                        model,
-                                        newdata = data.frame(
-                                                total_pa_land_cov = c(
-                                                        0,
-                                                        100
-                                                )
-                                        ),
-                                        type = "link"
-                                )
-                        )
-                }
-        )
-        
-        data.frame(
-                hypothesis = hypothesis,
-                response = response,
-                model = model_names,
-                estimate = vapply(
-                        models,
-                        function(model) {
-                                coef(model)[2]
-                        },
-                        numeric(1)
-                ),
-                standard_error = vapply(
-                        models,
-                        function(model) {
-                                coef(summary(model))[2, "Std. Error"]
-                        },
-                        numeric(1)
-                ),
-                F_value = vapply(
-                        tests,
-                        function(test) {
-                                test$F[2]
-                        },
-                        numeric(1)
-                ),
-                p_value = vapply(
-                        tests,
-                        function(test) {
-                                test$`Pr(>F)`[2]
-                        },
-                        numeric(1)
-                ),
-                residual_deviance = vapply(
-                        models,
-                        deviance,
-                        numeric(1)
-                ),
-                explained_deviance = 100 * vapply(
-                        models,
-                        function(model) {
-                                1 -
-                                        deviance(model) /
-                                        deviance(null_model)
-                        },
-                        numeric(1)
-                ),
-                predicted_at_0 = vapply(
-                        endpoint_predictions,
-                        function(prediction) {
-                                prediction[1]
-                        },
-                        numeric(1)
-                ),
-                predicted_at_100 = vapply(
-                        endpoint_predictions,
-                        function(prediction) {
-                                prediction[2]
-                        },
-                        numeric(1)
-                )
-        ) |>
-                mutate(
-                        change_percentage_points =
-                                100 * (
-                                        predicted_at_100 -
-                                                predicted_at_0
-                                ),
-                        relative_change = 100 *
-                                change_percentage_points /
-                                (predicted_at_0 * 100),
-                        best_in_sample =
-                                explained_deviance ==
-                                max(explained_deviance)
-                )
-}
 
 # Combine H1a and H1b results
 
@@ -926,6 +782,7 @@ h1_model_gt
 write.csv(
         h1_model_results,
         file = file.path(
+                "output",
                 "tables",
                 "Table_H1_model_results.csv"
         ),
@@ -938,7 +795,7 @@ write.csv(
 gt::gtsave(
         data = h1_model_gt,
         filename = "Table_H1_model_results.html",
-        path = "tables",
+        path = "output/tables",
         inline_css = TRUE
 )
 
@@ -947,5 +804,5 @@ gt::gtsave(
 gt::gtsave(
         data = h1_model_gt,
         filename = "Table_H1_model_results.docx",
-        path = "tables"
+        path = "output/tables"
 )
