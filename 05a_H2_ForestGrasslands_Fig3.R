@@ -194,6 +194,27 @@ p_balance <- plot_h2(
                 labels = scales::label_number()
         )
 
-p_loss + p_balance
+figure_3 <- p_loss + p_balance +
+        plot_layout(guides = "collect") &
+        theme(
+                legend.position = "bottom",
+                legend.title = element_blank(),
+                legend.key.width = unit(1.5, "cm")
+        )
 
 
+ggsave(
+        filename = file.path(
+                "output",
+                "figures",
+                "Figure_3.tiff"
+        ),
+        plot = figure_3,
+        width = 260,
+        height = 140,
+        units = "mm",
+        dpi = 600,
+        device = "tiff",
+        compression = "lzw",
+        bg = "white"
+)
