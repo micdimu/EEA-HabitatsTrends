@@ -1,21 +1,28 @@
 library(tidyverse)
 library(patchwork)
 library(sf)
-library(terra)
+library(biscale)
+library(ggspatial)
 
-source("Source.R")
+source("SourceCodes/Source03_Fig1_S1.R")
 
 #### Load data ####
 
 temporal_beta <- read.csv("processed/temporal_beta_cell_by_cell.csv") |> 
-        mutate(net_change = richness_2013_2018 - richness_2007_2012)
+        mutate(net_change = richness_2013_2018 - richness_2007_2012) 
+        
 
-grid_pa <- st_read("data/PAs/derived/europe_10km_protected_area_coverage.gpkg")
-
+grid_pa <- st_read("data/PAs/derived/europe_10km_protected_area_coverage_2012EU27.gpkg")
 
 grid_T <- grid_pa |>
+        filter(land_cov > 0) |>
         right_join(temporal_beta, by = c("CellCode" = "cell_id")) 
 
+
+
+temporal_beta$cell_id[(!(temporal_beta$cell_id %in% grid_pa$CellCode))]
+all((temporal_beta$cell_id %in% grid_pa$CellCode))
+sum(is.na(grid_T$richness_2007_2012))
 
 #### Figure 1 Bivariate map #####
 
@@ -34,16 +41,19 @@ beta_pa_map <- bivariate_map(
 beta_pa_map$plot
 
 layout <- c(
-        area(t = 0, l = 0, b = 12, r = 12),
-        area(t = 2.5, l = 1.8, b = 3.5, r = 2.8)
+        patchwork::area(t = 0, l = 0, b = 12, r = 12),
+        patchwork::area(t = 2.5, l = 1.8, b = 3.5, r = 2.8)
 )
 
 figure_1 <- beta_pa_map$map + beta_pa_map$legend + plot_layout(design = layout)
 
 figure_1
 
+dir.create("output/figures", recursive = TRUE, showWarnings = FALSE)
+
 ggsave(
         filename = file.path(
+                "output",
                 "figures",
                 "Figure_1.tiff"
         ),
@@ -95,75 +105,22 @@ CCCCCCDDDDDD
 EEEEFFFFGGGG
 "
 
-fig_supplementary <- wrap_plots( plots[c(2,3,1,7,4,5,6)], ncol = 3 ) +
+fig_S1 <- wrap_plots( plots[c(2,3,1,7,4,5,6)], ncol = 3 ) +
         plot_layout(design = design)+
         plot_annotation(tag_levels = "a") &
         theme(plot.tag = element_text(face = "bold", size = 11),
               plot.tag.position = c(0.02, 0.98))
 
-fig_supplementary
+fig_S1
 
-
-
-density_panel <- function(data,
-                          variable,
-                          x_label,
-                          fill,
-                          zero_line = FALSE,
-                          x_limits = NULL) {
-        
-        mediana <- median(data[[variable]], na.rm = TRUE)
-        
-        p <- ggplot(data, aes(x = .data[[variable]])) +
-                geom_density(
-                        fill = fill,
-                        colour = "black",
-                        linewidth = 0.45,
-                        alpha = 0.75,
-                        adjust = 4,
-                        na.rm = TRUE
-                ) +
-                geom_rug(
-                        sides = "b",
-                        alpha = 0.20,
-                        linewidth = 0.25,
-                        na.rm = TRUE
-                ) +
-                geom_vline(
-                        xintercept = mediana,
-                        linewidth = 0.55,
-                        linetype = "dashed"
-                ) +
-                annotate(
-                        "text",
-                        x = Inf,
-                        y = Inf,
-                        label = paste0("Median = ", round(mediana, 2)),
-                        hjust = 1.08,
-                        vjust = 1.5,
-                        size = 2.8
-                ) +
-                labs(
-                        x = x_label,
-                        y = "Density"
-                ) +
-                theme_classic(base_size = 9) +
-                theme(
-                        axis.title = element_text(size = 9),
-                        axis.text = element_text(size = 8, colour = "black"),
-                        axis.line = element_line(linewidth = 0.4),
-                        axis.ticks = element_line(linewidth = 0.4),
-                        plot.margin = margin(6, 8, 5, 6)
-                )
-        
-        if (zero_line) {
-                p <- p +
-                        geom_vline(
-                                xintercept = 0,
-                                linewidth = 0.45,
-                                colour = "grey35"
-                        )
-        }
-        
-        p
-}
+ggsave(
+        filename = "output/supplementary/Figure_S1.tiff",
+        plot = fig_S1,
+        device = "tiff",
+        width = 260,
+        height = 240,
+        units = "mm",
+        dpi = 600,
+        compression = "lzw",
+        bg = "white"
+)
