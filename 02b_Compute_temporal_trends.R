@@ -59,6 +59,16 @@ dat <- bind_rows(hab2018_cell, hab2012_cell) |>
         distinct(CellCode, period, habitat)  |> 
         filter(!is.na(CellCode), !is.na(habitat))
 
+# Complete both reporting periods for every cell.
+# Missing records are treated as zero reported habitats.
+dat <- dat |>
+        mutate(presence = 1L) |>
+        complete(
+                nesting(CellCode, habitat),
+                period = c("2007_2012", "2013_2018"),
+                fill = list(presence = 0L)
+        )
+
 ##### check data before run the analysis 
 
 dat |> 
@@ -74,13 +84,14 @@ dat |>
 
 #### build the community matrix #####
 
-comm <- dat |> 
-        mutate(presence = 1) |> 
-        unite(sample_id, CellCode, period, remove = FALSE) |> 
-        select(sample_id, habitat, presence) |> 
-        pivot_wider(names_from = habitat,
-                    values_from = presence,
-                    values_fill = 0)
+comm <- dat |>
+        unite(sample_id, CellCode, period, remove = FALSE) |>
+        select(sample_id, habitat, presence) |>
+        pivot_wider(
+                names_from = habitat,
+                values_from = presence,
+                values_fill = 0L
+        )
 
 meta <- comm |> 
         select(sample_id)  |> 
@@ -92,10 +103,11 @@ comm_mat <- comm |>
 
 rownames(comm_mat) <- comm$sample_id
 
-# write.csv(comm_mat,
-#           "processed/comm_mat.csv",
-#           row.names = T)
-# comm_mat <-  read.csv("processed/comm_mat.csv", row.names = 1, check.names = FALSE)
+write.csv(comm_mat,
+          "processed/comm_mat.csv",
+          row.names = T)
+
+comm_mat <-  read.csv("processed/comm_mat.csv", row.names = 1, check.names = FALSE)
 
 #### run the dissimilarity #####
 
@@ -109,23 +121,21 @@ cells <- meta %>%
         pull(cell_id)
 
 # compute temporal trend - NOT TO RUN - Time consuming
-# 
-# temporal_beta <- with_progress({
-#         p <- progressor(along = cells)
-#         future_map_dfr(cells, temporal_bgl, comm_mat = comm_mat, meta = meta)
-# })
 
-# # if(!dir.exists("processed")){
-#         dir.create("processed")
-# }
-# 
-# write.csv(temporal_beta,
-#           "processed/temporal_beta_cell_by_cell.csv",
-#           row.names = FALSE)
+temporal_beta <- with_progress({
+        p <- progressor(along = cells)
+        future_map_dfr(cells, temporal_bgl, comm_mat = comm_mat, meta = meta)
+})
 
-# temporal_beta <- read.csv("processed/temporal_beta_cell_by_cell.csv")
+if(!dir.exists("processed")){
+        dir.create("processed")
+}
 
-# temporal_beta$beta_jaccard |> hist()
+write.csv(temporal_beta,
+          "processed/temporal_beta_cell_by_cell.csv",
+          row.names = FALSE)
+
+temporal_beta <- read.csv("processed/temporal_beta_cell_by_cell.csv")
 
 #### temporal trends per each habitat group ####
 
@@ -150,13 +160,13 @@ write.csv(temporal_beta_group,
 
 #### compute temporal trends for each habitat ####
 
-# habitat_trend <- habitat_temporal_trend(
-#         comm_mat = comm_mat,
-#         meta = meta
-# )
-# 
-# write.csv(habitat_trend,
-#           "processed/temporal_each_habitat.csv",
-#           row.names = FALSE)
+habitat_trend <- habitat_temporal_trend(
+        comm_mat = comm_mat,
+        meta = meta
+        )
+ 
+write.csv(habitat_trend,
+          "processed/temporal_each_habitat.csv",
+          row.names = FALSE)
 
 
